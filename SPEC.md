@@ -26,16 +26,36 @@ The colour depth is reported by the cloud as `screenColor` and is read at startu
 
 ## 2. Architecture
 
-```
-Claude Code ──stdin──▶ eink-wrapper.ts ──stdin──▶ Claude HUD ──stdout──▶ terminal
-                            │
-                            ├── writes  eink-snapshots/{sid}.json   (≤ every 30s)
-                            └── spawns  main.py                     (if not running)
+Two processes that never talk to each other directly. They meet at a directory of
+snapshot files, which is also what makes the wrapper safe: if the bridge is dead,
+misconfigured, or offline, the wrapper still forwards HUD's output and the terminal
+is unaffected.
 
-main.py ──reads snapshots──▶ picks newest ──▶ renders PNG ──▶ POST to Zectrix cloud
-                                                                       │
-                                                          device polls ▼
-                                                                   e-ink panel
+```mermaid
+flowchart TB
+  subgraph proc1["Claude Code process, once per status-line refresh"]
+    CC["Claude Code"] -->|stdin| W["eink-wrapper.ts"]
+    W -->|stdin| HUD["Claude HUD"]
+    HUD -->|"stdout, untouched"| CC
+  end
+
+  subgraph disk["CLAUDE_CONFIG_DIR/plugins/claude-hud"]
+    SNAP[("eink-snapshots/sid.json<br/>one file per session")]
+    PID[("eink-bridge.pid")]
+  end
+
+  subgraph proc2["main.py, detached, every interval_seconds"]
+    SCAN["scan, drop stale,<br/>pick newest"] --> HASH{"changed since<br/>last cycle?"}
+    HASH -->|no| SKIP["skip"]
+    HASH -->|yes| REND["render 400 x 300"]
+  end
+
+  W -->|"write, throttled to 30s"| SNAP
+  W -.->|"spawn when PID missing or dead"| SCAN
+  SNAP --> SCAN
+  SCAN --> PID
+  REND -->|"POST multipart PNG"| CLOUD["Zectrix cloud"]
+  CLOUD -.->|"device polls, ~60s"| PANEL["E-ink panel<br/>400 x 300, 1-bit"]
 ```
 
 Three properties fall out of this shape:
@@ -182,8 +202,34 @@ Two planes are composed separately and merged at the end:
   Box, not Lanczos — an exact area average with no ringing halos.
 - **Text** is drawn at native size, where the font's own hinting applies.
 
-They are kept apart so the output conversion can treat them differently. Shapes are
-composited darkest-wins (`ImageChops.darker`).
+They are kept apart because they want opposite treatment. Supersampling a curve
+improves it; supersampling a glyph throws away the hinting that makes it crisp at
+12px. Keeping the planes separate also means a future output mode can threshold one
+and dither the other.
+
+```mermaid
+flowchart TB
+  subgraph planes["composed separately"]
+    direction LR
+    SHAPES["shape layer, 4x<br/>1600 x 1200<br/>bars, gauge, rules"]
+    TEXT["text layer, 1x<br/>400 x 300<br/>native hinting"]
+  end
+
+  SNAP["snapshot"] --> SHAPES
+  SNAP --> TEXT
+  SHAPES -->|"BOX downsample, no ringing"| FLAT["shapes, 400 x 300"]
+  FLAT --> MERGE["merge, darkest wins"]
+  TEXT --> MERGE
+  MERGE --> MODE{"render_mode"}
+  MODE -->|gray| GRAY["8-bit greyscale<br/>edges keep anti-aliasing"]
+  MODE -->|mono| MONO["threshold at 128<br/>1-bit"]
+  GRAY -->|"dither=true"| OUT["PNG to device"]
+  MONO -->|"dither=false"| OUT
+```
+
+`render_mode: auto` resolves to one of these two branches once, at startup, from the
+panel's reported colour depth (§7). Because nothing is drawn in a mid-tone (§6.2),
+the two branches differ only at glyph and curve edges.
 
 ### 6.2 No mid-tones
 
