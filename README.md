@@ -102,7 +102,7 @@ bash install.sh --config-dir "$HOME/.claude-team"
 | `interval_seconds` | 否 | 检查数据并尝试推送的间隔，默认 60 秒 |
 | `greeting` | 否 | 顶部问候语，过长时自动截断 |
 | `font_path` | 否 | 本地 TTF 字体路径，默认 `font.ttf` |
-| `render_mode` | 否 | `gray`（默认）推送抗锯齿灰度图，由设备自行抖动；`mono` 推送本地已做有序抖动的 1-bit 图 |
+| `render_mode` | 否 | `gray`（默认）推送抗锯齿灰度图；`mono` 推送纯黑白 1-bit 图。画面本身不含中间灰，两种模式的差别只在文字边缘 |
 
 ## 排查问题
 

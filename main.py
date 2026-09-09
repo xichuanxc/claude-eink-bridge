@@ -173,40 +173,27 @@ def format_reset_time(reset_iso):
 # that ImageDraw cannot produce on its own.
 SS = 4
 
-# Ordered-dither matrix used by mono mode. Only the shape plane goes through
-# it, so the flat greys become a stable halftone while text stays untouched.
-BAYER8 = (
-    ( 0, 32,  8, 40,  2, 34, 10, 42),
-    (48, 16, 56, 24, 50, 18, 58, 26),
-    (12, 44,  4, 36, 14, 46,  6, 38),
-    (60, 28, 52, 20, 62, 30, 54, 22),
-    ( 3, 35, 11, 43,  1, 33,  9, 41),
-    (51, 19, 59, 27, 49, 17, 57, 25),
-    (15, 47,  7, 39, 13, 45,  5, 37),
-    (63, 31, 55, 23, 61, 29, 53, 21),
-)
-
 
 class EinkRenderer:
     """Renders the 400×300 dashboard as an 8-bit greyscale image.
 
-    Everything is composed in "L" so glyphs are anti-aliased and flat areas can
-    carry a light tone. ``render_mode`` decides what leaves the renderer:
-      "gray" — the greyscale image, letting the device do its own dithering
-      "mono" — a 1-bit image, ordered-dithered here so text stays crisp
+    Everything is composed in "L" so glyphs and curves come out anti-aliased.
+    Nothing is drawn in a mid-tone — unfilled bars and the ring are hairline
+    outlines — because a flat grey has to be dithered somewhere, and on this
+    panel the halftone reads as dirt. ``render_mode`` decides what leaves the
+    renderer:
+      "gray" — the greyscale image, anti-aliased edges intact
+      "mono" — thresholded to 1-bit
     """
 
     W, H = 400, 300
 
     # ── Tones ─────────────────────────────────────────────────────
-    # (track / hairline are per-mode: a tone that reads as a light grey on a
-    #  greyscale panel disappears entirely once it is dithered to 1-bit.)
+    # Solid ink only. A flat mid-grey has to be dithered somewhere — by us or
+    # by the panel — and on a ~120 DPI e-ink at this contrast the halftone
+    # reads as dirt rather than as a lighter shade. Unfilled areas are drawn
+    # as hairline outlines instead.
     INK = 0
-    TONES = {
-        # mode  : (progress-bar & ring track, section rule)
-        "gray": (226, 198),
-        "mono": (150, 0),
-    }
 
     # ── Layout grid ───────────────────────────────────────────────
     PAD        = 16
@@ -236,8 +223,7 @@ class EinkRenderer:
 
     def __init__(self, font_path, greeting="今天的Token用完了吗？", render_mode="gray"):
         self.greeting = greeting
-        self.render_mode = render_mode if render_mode in self.TONES else "gray"
-        self.TRACK, self.HAIRLINE = self.TONES[self.render_mode]
+        self.render_mode = render_mode if render_mode in ("gray", "mono") else "gray"
         self._font_path = font_path
         self._fonts = {}
         self._digit_w = {}
@@ -318,79 +304,74 @@ class EinkRenderer:
         # BOX is an exact area average: no ringing halos around the shapes.
         return ImageChops.darker(base, layer.resize((self.W, self.H), Image.BOX))
 
-    def _rule(self, draw, y, x0=None, x1=None, tone=None):
+    def _rule(self, draw, y, x0=None, x1=None):
         x0 = self.PAD if x0 is None else x0
         x1 = (self.W - self.PAD) if x1 is None else x1
-        tone = self.HAIRLINE if tone is None else tone
-        draw.rectangle([(x0 * SS, y * SS), (x1 * SS, (y + 1) * SS - 1)], fill=tone)
+        draw.rectangle([(x0 * SS, y * SS), (x1 * SS, (y + 1) * SS - 1)], fill=self.INK)
 
     def _bar(self, layer, x0, y0, x1, y1, percent):
-        """Pill-shaped progress bar with a correctly clipped fill."""
+        """Hairline pill, filled solid up to `percent`."""
         w, h = (x1 - x0) * SS, (y1 - y0) * SS
         r = h / 2
-        paint = Image.new("L", (w, h), self.TRACK)
+        ox, oy = x0 * SS, y0 * SS
+
+        ImageDraw.Draw(layer).rounded_rectangle(
+            [(ox, oy), (ox + w - 1, oy + h - 1)],
+            radius=r, outline=self.INK, width=SS,
+        )
+
         fill_w = int(w * min(max(percent, 0), 100) / 100)
         if fill_w > 0:
-            ImageDraw.Draw(paint).rectangle([(0, 0), (fill_w - 1, h)], fill=self.INK)
-        mask = Image.new("L", (w, h), 0)
-        ImageDraw.Draw(mask).rounded_rectangle([(0, 0), (w - 1, h - 1)], radius=r, fill=255)
-        layer.paste(paint, (x0 * SS, y0 * SS), mask)
+            mask = Image.new("L", (w, h), 0)
+            md = ImageDraw.Draw(mask)
+            md.rounded_rectangle([(0, 0), (w - 1, h - 1)], radius=r, fill=255)
+            md.rectangle([(fill_w, 0), (w, h)], fill=0)
+            layer.paste(Image.new("L", (w, h), self.INK), (ox, oy), mask)
 
     def _ring(self, layer, cx, cy, r, thickness, percent):
-        """Circular gauge with rounded ends, drawn as an annulus-masked paint."""
+        """Hairline annulus, filled solid over the swept arc."""
         d = 2 * r * SS
+        ox, oy = (cx - r) * SS, (cy - r) * SS
         box = [(0, 0), (d - 1, d - 1)]
-        inner_pad = thickness * SS
-        inner = [(inner_pad, inner_pad), (d - 1 - inner_pad, d - 1 - inner_pad)]
+        pad = thickness * SS
+        inner = [(pad, pad), (d - 1 - pad, d - 1 - pad)]
 
-        paint = Image.new("L", (d, d), 255)
-        pd = ImageDraw.Draw(paint)
-        pd.ellipse(box, fill=self.TRACK)
+        ld = ImageDraw.Draw(layer)
+        ld.ellipse([(ox, oy), (ox + d - 1, oy + d - 1)], outline=self.INK, width=SS)
+        ld.ellipse([(ox + pad, oy + pad), (ox + d - 1 - pad, oy + d - 1 - pad)],
+                   outline=self.INK, width=SS)
 
         pct = min(max(percent, 0), 100)
-        if pct > 0:
-            sweep = 360 * pct / 100
-            pd.pieslice(box, -90, -90 + sweep, fill=self.INK)
-            # Round off both ends of the arc.
-            mid = (r - thickness / 2) * SS
-            cap = thickness * SS / 2
-            for ang in (-90, -90 + sweep):
-                ax = d / 2 + mid * math.cos(math.radians(ang))
-                ay = d / 2 + mid * math.sin(math.radians(ang))
-                pd.ellipse([(ax - cap, ay - cap), (ax + cap, ay + cap)], fill=self.INK)
+        if pct <= 0:
+            return
 
+        sweep = 360 * pct / 100
         mask = Image.new("L", (d, d), 0)
         md = ImageDraw.Draw(mask)
-        md.ellipse(box, fill=255)
+        md.pieslice(box, -90, -90 + sweep, fill=255)
+        # Round off both ends of the arc.
+        mid = (r - thickness / 2) * SS
+        cap = thickness * SS / 2
+        for ang in (-90, -90 + sweep):
+            ax = d / 2 + mid * math.cos(math.radians(ang))
+            ay = d / 2 + mid * math.sin(math.radians(ang))
+            md.ellipse([(ax - cap, ay - cap), (ax + cap, ay + cap)], fill=255)
         md.ellipse(inner, fill=0)
-        layer.paste(paint, ((cx - r) * SS, (cy - r) * SS), mask)
+        layer.paste(Image.new("L", (d, d), self.INK), (ox, oy), mask)
 
     # ── Output conversion ─────────────────────────────────────────
 
-    def _dither(self, img):
-        w, h = img.size
-        src = img.tobytes()
-        out = bytearray(w * h)
-        for y in range(h):
-            row = BAYER8[y & 7]
-            base = y * w
-            for x in range(w):
-                out[base + x] = 255 if src[base + x] > (row[x & 7] * 4 + 2) else 0
-        return Image.frombytes("L", (w, h), bytes(out))
-
     def _compose(self, shapes, text):
-        """Merge the shape and text planes, converting for the output mode.
+        """Merge the shape and text planes and convert for the output mode.
 
-        The two planes are kept apart so mono mode can halftone the flat greys
-        without letting the dither matrix chew through anti-aliased glyphs —
-        text is thresholded instead, which keeps it as crisp as a direct 1-bit
-        render while the bars and ring still get a smooth tone.
+        Since nothing is drawn in a mid-tone, mono simply thresholds: no
+        dithering is involved and the only greys in play are the anti-aliased
+        edges of glyphs and curves.
         """
+        merged = ImageChops.darker(shapes, text)
         if self.render_mode == "mono":
-            shapes = self._dither(shapes)
-            text = text.point(lambda p: 0 if p < 128 else 255)
-            return ImageChops.darker(shapes, text).convert("1")
-        return ImageChops.darker(shapes, text)
+            return merged.point(lambda p: 0 if p < 128 else 255).convert("1")
+        return merged
 
     # ── Public entry point ────────────────────────────────────────
 
@@ -502,7 +483,7 @@ class EinkRenderer:
         col_w = (self.L_RIGHT - 10 - self.PAD) / 3
         for i, (label, value) in enumerate(cols):
             x = self.PAD + i * col_w
-            self._tracked(draw, x, self.STAT_LBL, label, self.f(10), 1.4)
+            self._tracked(draw, x, self.STAT_LBL, label, self.f(11), 1.4)
             self._tab(draw, x, self.STAT_VAL, value, self.f(18))
 
         # Context ring label

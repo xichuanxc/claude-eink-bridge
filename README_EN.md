@@ -102,7 +102,7 @@ Without either option, the bridge uses `~/.claude`.
 | `interval_seconds` | No | Data check and push interval; defaults to 60 seconds |
 | `greeting` | No | Header greeting; long text is truncated |
 | `font_path` | No | Local TTF path; defaults to `font.ttf` |
-| `render_mode` | No | `gray` (default) pushes an anti-aliased greyscale image and lets the device dither it; `mono` pushes a 1-bit image ordered-dithered locally |
+| `render_mode` | No | `gray` (default) pushes an anti-aliased greyscale image; `mono` pushes pure black-and-white. The layout itself uses no mid-tones, so the two differ only at glyph edges |
 
 ## Troubleshooting
 
