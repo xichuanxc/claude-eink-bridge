@@ -53,7 +53,8 @@ curl -fsSL https://raw.githubusercontent.com/BarryBarrywu/claude-eink-bridge/mai
   "interval_seconds": 60,
   "greeting": "今天的Token用完了吗？",
   "font_path": "font.ttf",
-  "render_mode": "auto"
+  "render_mode": "auto",
+  "typeface": "outline"
 }
 ```
 
@@ -103,6 +104,8 @@ bash install.sh --config-dir "$HOME/.claude-team"
 | `greeting` | 否 | 顶部问候语，过长时自动截断 |
 | `font_path` | 否 | 本地 TTF 字体路径，默认 `font.ttf` |
 | `render_mode` | 否 | `auto`（默认）向云端查询屏幕能力：1-bit 面板用 `mono`，其余用 `gray`。也可直接写死 `gray` / `mono` |
+| `typeface` | 否 | `outline`（默认）使用 MiSans；`pixel` 使用 Ark Pixel 点阵字体，只按 12px 的整数倍排版 |
+| `pixel_font_path` | 否 | 点阵字体路径，默认 `font-pixel.ttf` |
 
 ## 排查问题
 
@@ -121,6 +124,7 @@ python main.py --preview
 
 ```bash
 python main.py --preview --mode mono
+python main.py --preview --typeface pixel
 ```
 
 屏幕仍不更新时，重点检查会话快照、`api_key`、`mac_address`、`page_id`、设备联网状态和 Zectrix 轮询设置。
@@ -166,6 +170,7 @@ node ~/.claude-eink-bridge/setup-eink.mjs --undo
 | `install.sh` / `install.command` | macOS 安装入口 |
 | `config.example.json` | 配置模板 |
 | `font.ttf` | 默认 MiSans 字体 |
+| `font-pixel.ttf` | Ark Pixel 12px 点阵字体（OFL，见 `OFL-ark-pixel.txt`）|
 
 ## 关注项目
 

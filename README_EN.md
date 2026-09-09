@@ -53,7 +53,8 @@ Sign in to [Zectrix Cloud](https://cloud.zectrix.com/) and edit `~/.claude-eink-
   "interval_seconds": 60,
   "greeting": "Token exhausted yet?",
   "font_path": "font.ttf",
-  "render_mode": "auto"
+  "render_mode": "auto",
+  "typeface": "outline"
 }
 ```
 
@@ -103,6 +104,8 @@ Without either option, the bridge uses `~/.claude`.
 | `greeting` | No | Header greeting; long text is truncated |
 | `font_path` | No | Local TTF path; defaults to `font.ttf` |
 | `render_mode` | No | `auto` (default) asks the cloud what the panel supports: `mono` for a 1-bit board, `gray` otherwise. Set `gray` or `mono` to pin it |
+| `typeface` | No | `outline` (default) uses MiSans; `pixel` uses the Ark Pixel bitmap font and lays out on multiples of 12px |
+| `pixel_font_path` | No | Bitmap font path; defaults to `font-pixel.ttf` |
 
 ## Troubleshooting
 
@@ -121,6 +124,7 @@ If `preview-local.png` appears, configuration loading and local rendering are wo
 
 ```bash
 python main.py --preview --mode mono
+python main.py --preview --typeface pixel
 ```
 
 If the device still does not update, check the session snapshots, `api_key`, `mac_address`, `page_id`, device connectivity, and the Zectrix polling interval.

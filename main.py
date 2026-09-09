@@ -56,10 +56,21 @@ def load_config():
             print(f"   Copy config.example.json → config.json and fill in your values.")
             sys.exit(1)
 
-    font_raw = cfg.get("font_path", "font.ttf")
-    if not os.path.isabs(font_raw):
-        font_raw = str(Path(__file__).parent / font_raw)
-    cfg["font_path"] = font_raw
+    def _resolve(raw):
+        return raw if os.path.isabs(raw) else str(Path(__file__).parent / raw)
+
+    cfg["font_path"] = _resolve(cfg.get("font_path", "font.ttf"))
+    cfg["pixel_font_path"] = _resolve(cfg.get("pixel_font_path", "font-pixel.ttf"))
+
+    face = str(cfg.get("typeface", "outline")).lower()
+    if face not in ("outline", "pixel"):
+        print(f"⚠️  Unknown typeface '{face}' — falling back to 'outline'.")
+        face = "outline"
+    if face == "pixel" and not os.path.exists(cfg["pixel_font_path"]):
+        print(f"⚠️  Pixel font not found: {cfg['pixel_font_path']}")
+        print("   Falling back to 'outline'.")
+        face = "outline"
+    cfg["typeface"] = face
 
     mode = str(cfg.get("render_mode", "auto")).lower()
     if mode not in ("auto", "gray", "mono"):
@@ -174,6 +185,52 @@ def format_reset_time(reset_iso):
 SS = 4
 
 
+# Each role lists its font candidates in order of preference; the first whose
+# rendering fits the space available wins. "base" is the configured outline
+# font, "pixel" the bitmap one.
+#
+# Ark Pixel is drawn on a 12px grid, so the pixel set only ever asks for exact
+# multiples of 12 — anything between them resamples the bitmap and undoes the
+# whole point of using it.
+ROLE_FONTS = {
+    "outline": {
+        "greet":      [("base", 17), ("base", 16), ("base", 15),
+                       ("base", 14), ("base", 13)],
+        "date":       [("base", 13)],
+        "model":      [("base", 32)],
+        "meta":       [("base", 13)],
+        "stat_label": [("base", 11)],
+        "stat_value": [("base", 18)],
+        "ring_pct":   [("base", 28)],
+        "ring_cap":   [("base", 12)],
+        "limit":      [("base", 15)],
+        "footer":     [("base", 12)],
+        "wait_title": [("base", 17)],
+        "wait_sub":   [("base", 13)],
+    },
+    "pixel": {
+        "greet":      [("pixel", 24), ("pixel", 12)],
+        "date":       [("pixel", 12)],
+        "model":      [("pixel", 36), ("pixel", 24)],
+        "meta":       [("pixel", 12)],
+        "stat_label": [("pixel", 12)],
+        "stat_value": [("pixel", 24)],
+        "ring_pct":   [("pixel", 36), ("pixel", 24)],
+        "ring_cap":   [("pixel", 12)],
+        "limit":      [("pixel", 24)],
+        "footer":     [("pixel", 12)],
+        "wait_title": [("pixel", 24)],
+        "wait_sub":   [("pixel", 12)],
+    },
+}
+
+# The pixel set is wider per character, so the rate-limit columns give the bar
+# back some room rather than letting "5d 22h" collide with it.
+LAYOUT_OVERRIDES = {
+    "pixel": {"BAR_X1": 228, "PCT_RIGHT": 296, "STAT_TRACK": 2},
+}
+
+
 class EinkRenderer:
     """Renders the 400×300 dashboard as an 8-bit greyscale image.
 
@@ -221,19 +278,37 @@ class EinkRenderer:
     PCT_RIGHT   = 314
     RESET_RIGHT = 384
 
-    def __init__(self, font_path, greeting="今天的Token用完了吗？", render_mode="gray"):
+    STAT_TRACK = 1.4         # letter-spacing on the IN/OUT/CACHE labels
+
+    def __init__(self, font_path, greeting="今天的Token用完了吗？",
+                 render_mode="gray", typeface="outline", pixel_font_path=None):
         self.greeting = greeting
         self.render_mode = render_mode if render_mode in ("gray", "mono") else "gray"
-        self._font_path = font_path
+        self.typeface = typeface if typeface in ROLE_FONTS else "outline"
+        if self.typeface == "pixel" and not pixel_font_path:
+            self.typeface = "outline"
+        for name, value in LAYOUT_OVERRIDES.get(self.typeface, {}).items():
+            setattr(self, name, value)
+
+        self._paths = {"base": font_path, "pixel": pixel_font_path}
         self._fonts = {}
         self._digit_w = {}
 
     # ── Fonts ─────────────────────────────────────────────────────
 
-    def f(self, size):
-        if size not in self._fonts:
-            self._fonts[size] = ImageFont.truetype(self._font_path, size)
-        return self._fonts[size]
+    def f(self, key, size):
+        if (key, size) not in self._fonts:
+            self._fonts[(key, size)] = ImageFont.truetype(self._paths[key], size)
+        return self._fonts[(key, size)]
+
+    def role(self, name, text=None, max_w=None):
+        """Font for a role, stepped down until `text` fits `max_w`."""
+        candidates = ROLE_FONTS[self.typeface][name]
+        for key, size in candidates:
+            font = self.f(key, size)
+            if text is None or max_w is None or self._tab_w(font, text) <= max_w:
+                return font
+        return self.f(*candidates[-1])
 
     def _dw(self, font):
         """Widest digit advance — used to fake tabular figures."""
@@ -241,11 +316,18 @@ class EinkRenderer:
             self._digit_w[font] = max(font.getlength(str(d)) for d in range(10))
         return self._digit_w[font]
 
+    def _snap(self, v):
+        """Bitmap glyphs must land on whole pixels or they resample to mush."""
+        return round(v) if self.typeface == "pixel" else v
+
     # ── Text ──────────────────────────────────────────────────────
 
     def _text(self, draw, x, baseline, text, font, fill=INK, align="l"):
-        anchor = {"l": "ls", "r": "rs", "c": "ms"}[align]
-        draw.text((x, baseline), text, font=font, fill=fill, anchor=anchor)
+        if align == "r":
+            x -= font.getlength(text)
+        elif align == "c":
+            x -= font.getlength(text) / 2
+        draw.text((self._snap(x), baseline), text, font=font, fill=fill, anchor="ls")
 
     def _tab_w(self, font, text):
         dw = self._dw(font)
@@ -266,26 +348,18 @@ class EinkRenderer:
             x -= total / 2
         for c in text:
             if c.isdigit():
-                draw.text((x + (dw - font.getlength(c)) / 2, baseline), c,
-                          font=font, fill=fill, anchor="ls")
+                draw.text((self._snap(x + (dw - font.getlength(c)) / 2), baseline),
+                          c, font=font, fill=fill, anchor="ls")
                 x += dw
             else:
-                draw.text((x, baseline), c, font=font, fill=fill, anchor="ls")
+                draw.text((self._snap(x), baseline), c, font=font, fill=fill, anchor="ls")
                 x += font.getlength(c)
 
     def _tracked(self, draw, x, baseline, text, font, spacing, fill=INK):
         """Letter-spaced text, for the small uppercase labels."""
         for c in text:
-            draw.text((x, baseline), c, font=font, fill=fill, anchor="ls")
+            draw.text((self._snap(x), baseline), c, font=font, fill=fill, anchor="ls")
             x += font.getlength(c) + spacing
-
-    def _fit(self, text, sizes, max_w):
-        """Largest of `sizes` at which `text` still fits, else the smallest."""
-        for size in sizes:
-            font = self.f(size)
-            if font.getlength(text) <= max_w:
-                return font
-        return self.f(sizes[-1])
 
     def _truncate(self, text, font, max_w):
         if font.getlength(text) <= max_w:
@@ -400,16 +474,20 @@ class EinkRenderer:
     def _waiting_shapes(self, layer, ld):
         self._rule(ld, self.RULE_HDR, 0, self.W)
         self._ring(layer, self.W // 2, 145, 46, 10, 0)
+        for dx in (-14, 0, 14):
+            x, y = (self.W // 2 + dx) * SS, 145 * SS
+            ld.rectangle([(x - 2 * SS, y - 2 * SS),
+                          (x + 2 * SS - 1, y + 2 * SS - 1)], fill=self.INK)
 
     def _waiting_text(self, draw):
         avail = self.W - 2 * self.PAD
-        f_greet = self._fit(self.greeting, (17, 16, 15, 14, 13), avail)
+        f_greet = self.role("greet", self.greeting, avail)
         self._text(draw, self.PAD, self.HDR_BASE,
                    self._truncate(self.greeting, f_greet, avail), f_greet)
-        draw.text((self.W // 2, 145), "···", font=self.f(26),
-                  fill=self.INK, anchor="mm")
-        self._text(draw, self.W // 2, 232, "Waiting for a session", self.f(17), align="c")
-        self._text(draw, self.W // 2, 256, "Start Claude Code to begin", self.f(13), align="c")
+        self._text(draw, self.W // 2, 232, "Waiting for a session",
+                   self.role("wait_title"), align="c")
+        self._text(draw, self.W // 2, 256, "Start Claude Code to begin",
+                   self.role("wait_sub"), align="c")
 
     # ── Chrome ────────────────────────────────────────────────────
 
@@ -421,27 +499,29 @@ class EinkRenderer:
     def _header(self, draw, snapshot):
         ts = self._parse_ts(snapshot)
         date_str = ts.strftime("%Y-%m-%d") if ts else "----------"
-        date_w = self._tab_w(self.f(13), date_str)
+        f_date = self.role("date")
+        date_w = self._tab_w(f_date, date_str)
         # A longer greeting steps down a size or two rather than losing its tail.
         avail = self.W - 2 * self.PAD - date_w - 16
-        f_greet = self._fit(self.greeting, (17, 16, 15, 14, 13), avail)
+        f_greet = self.role("greet", self.greeting, avail)
         self._text(draw, self.PAD, self.HDR_BASE,
                    self._truncate(self.greeting, f_greet, avail), f_greet)
-        self._tab(draw, self.W - self.PAD, self.HDR_BASE, date_str, self.f(13), align="r")
+        self._tab(draw, self.W - self.PAD, self.HDR_BASE, date_str, f_date, align="r")
 
     def _footer(self, draw, snapshot, active_sessions):
         y = self.FOOT_BASE
+        f_foot = self.role("footer")
         session = snapshot.get("sessionDuration", "")
         if session:
-            self._tab(draw, self.PAD, y, f"Session {session}", self.f(12))
+            self._tab(draw, self.PAD, y, f"Session {session}", f_foot)
 
         if active_sessions > 1:
             self._tab(draw, self.W // 2, y, f"{active_sessions} sessions",
-                      self.f(12), align="c")
+                      f_foot, align="c")
 
         ts = self._parse_ts(snapshot)
         self._tab(draw, self.W - self.PAD, y,
-                  ts.strftime("%H:%M") if ts else "--:--", self.f(12), align="r")
+                  ts.strftime("%H:%M") if ts else "--:--", f_foot, align="r")
 
     # ── Body ──────────────────────────────────────────────────────
 
@@ -454,13 +534,14 @@ class EinkRenderer:
         max_w = self.L_RIGHT - self.PAD
 
         model = snapshot.get("model", "Unknown")
+        f_model = self.role("model", model, max_w)
         self._text(draw, self.PAD, self.MODEL_BASE,
-                   self._truncate(model, self.f(32), max_w), self.f(32))
+                   self._truncate(model, f_model, max_w), f_model)
 
         # project · branch
         # The branch is the more perishable half, so the directory gives up
         # room first rather than the whole line truncating from the right.
-        f_meta = self.f(13)
+        f_meta = self.role("meta")
         git = snapshot.get("git") or {}
         branch = (git["branch"] + ("*" if git.get("isDirty") else "")) if git.get("branch") else ""
         branch = self._truncate(branch, f_meta, max_w * 0.55) if branch else ""
@@ -483,16 +564,20 @@ class EinkRenderer:
         col_w = (self.L_RIGHT - 10 - self.PAD) / 3
         for i, (label, value) in enumerate(cols):
             x = self.PAD + i * col_w
-            self._tracked(draw, x, self.STAT_LBL, label, self.f(11), 1.4)
-            self._tab(draw, x, self.STAT_VAL, value, self.f(18))
+            self._tracked(draw, x, self.STAT_LBL, label,
+                          self.role("stat_label"), self.STAT_TRACK)
+            self._tab(draw, x, self.STAT_VAL, value, self.role("stat_value"))
 
         # Context ring label
-        pct = ctx.get("percent", 0)
-        self._tab(draw, self.RING_CX, self.RING_CY + 10, f"{pct}%", self.f(28), align="c")
+        pct_str = f"{ctx.get('percent', 0)}%"
+        inner_w = 2 * (self.RING_R - self.RING_TH) - 8
+        self._tab(draw, self.RING_CX, self.RING_CY + 10, pct_str,
+                  self.role("ring_pct", pct_str, inner_w), align="c")
         total, size = ctx.get("totalTokens", 0), ctx.get("windowSize", 0)
         cap = (f"{format_tokens(total)} / {format_tokens(size)}"
                if size > 0 else "CONTEXT")
-        self._tab(draw, self.RING_CX, self.RING_CAP_BASE, cap, self.f(12), align="c")
+        self._tab(draw, self.RING_CX, self.RING_CAP_BASE, cap,
+                  self.role("ring_cap"), align="c")
 
     # ── Rate limits ───────────────────────────────────────────────
 
@@ -524,16 +609,17 @@ class EinkRenderer:
         rows = self._rows(snapshot)
         if not rows:
             self._text(draw, self.W // 2, (self.RULE_BODY + self.RULE_FOOT) // 2 + 5,
-                       "No rate-limit data", self.f(13), align="c")
+                       "No rate-limit data", self.role("meta"), align="c")
             return
         top = self._row_top(rows)
         for i, (label, percent, reset_iso) in enumerate(rows):
             base = top + i * self.ROW_H + self.ROW_H // 2 + 6
-            self._text(draw, self.PAD, base, label, self.f(15))
-            self._tab(draw, self.PCT_RIGHT, base, f"{percent}%", self.f(15), align="r")
+            f_lim = self.role("limit")
+            self._text(draw, self.PAD, base, label, f_lim)
+            self._tab(draw, self.PCT_RIGHT, base, f"{percent}%", f_lim, align="r")
             reset = format_reset_time(reset_iso)
             if reset:
-                self._tab(draw, self.RESET_RIGHT, base, reset, self.f(15), align="r")
+                self._tab(draw, self.RESET_RIGHT, base, reset, f_lim, align="r")
 
     # ── Misc ──────────────────────────────────────────────────────
 
@@ -631,6 +717,7 @@ def run(config, *, once=False, preview=False, debug=False):
     if config["render_mode"] == "auto":
         config["render_mode"] = detect_render_mode(config)
     print(f"  Render  : {config['render_mode']}")
+    print(f"  Typeface: {config['typeface']}")
     print(f"  Snapshots: {SNAPSHOTS_DIR}")
     print()
 
@@ -638,6 +725,8 @@ def run(config, *, once=False, preview=False, debug=False):
         config["font_path"],
         greeting=config.get("greeting", "今天的Token用完了吗？"),
         render_mode=config["render_mode"],
+        typeface=config["typeface"],
+        pixel_font_path=config["pixel_font_path"],
     )
 
     if preview:
@@ -703,11 +792,17 @@ def main():
         "--mode", choices=("auto", "gray", "mono"),
         help="Override config.json's render_mode for this run",
     )
+    parser.add_argument(
+        "--typeface", choices=("outline", "pixel"),
+        help="Override config.json's typeface for this run",
+    )
     args = parser.parse_args()
 
     config = load_config()
     if args.mode:
         config["render_mode"] = args.mode
+    if args.typeface:
+        config["typeface"] = args.typeface
 
     if not os.path.exists(config["font_path"]):
         print(f"❌ Font not found: {config['font_path']}")
