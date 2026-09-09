@@ -13,15 +13,20 @@ Claude Code E-Ink Bridge 是 [Claude HUD](https://github.com/jarrodwatts/claude-
 ## 实际效果
 
 <p align="center">
-  <img src="./preview.png" width="560" alt="400×300 的 Claude Code 墨水屏看板，显示模型、上下文、额度与会话状态">
+  <img src="./preview.png" width="420" alt="400×300 的 Claude Code 墨水屏看板，使用 MiSans 字体">
+  <img src="./preview-pixel.png" width="420" alt="同一块看板，使用 Ark Pixel 点阵字体">
+</p>
+
+<p align="center">
+  <sub>左：默认的 <code>outline</code> 字体　·　右：<code>typeface: "pixel"</code> 点阵字体</sub>
 </p>
 
 一块屏幕集中显示：
 
-- 当前模型、项目目录与 Git 分支状态
+- 当前模型、项目目录与 Git 分支（各占一行）
 - 输入、输出与缓存 Token
 - 上下文占用量和 5 小时 / 7 天额度
-- 额度重置倒计时、会话时长、活跃会话数和更新时间
+- 额度重置倒计时、日期、会话时长、活跃会话数和更新时间
 
 ## 快速开始
 

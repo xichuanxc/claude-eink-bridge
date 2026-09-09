@@ -13,12 +13,17 @@ Claude Code E-Ink Bridge is a local bridge between [Claude HUD](https://github.c
 ## Real output
 
 <p align="center">
-  <img src="./preview.png" width="560" alt="A 400×300 Claude Code dashboard showing model, context, rate limits, and session status">
+  <img src="./preview.png" width="420" alt="A 400×300 Claude Code dashboard set in MiSans">
+  <img src="./preview-pixel.png" width="420" alt="The same dashboard set in the Ark Pixel bitmap font">
+</p>
+
+<p align="center">
+  <sub>Left: the default <code>outline</code> typeface　·　Right: <code>typeface: "pixel"</code></sub>
 </p>
 
 The display keeps these signals visible at a glance:
 
-- current model, project directory, and Git branch status;
+- current model, plus project directory and Git branch on a line each;
 - input, output, and cached tokens;
 - context occupancy and 5-hour / 7-day usage windows;
 - reset countdowns, session duration, active-session count, and update time.
