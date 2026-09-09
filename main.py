@@ -293,6 +293,14 @@ class EinkRenderer:
             draw.text((x, baseline), c, font=font, fill=fill, anchor="ls")
             x += font.getlength(c) + spacing
 
+    def _fit(self, text, sizes, max_w):
+        """Largest of `sizes` at which `text` still fits, else the smallest."""
+        for size in sizes:
+            font = self.f(size)
+            if font.getlength(text) <= max_w:
+                return font
+        return self.f(sizes[-1])
+
     def _truncate(self, text, font, max_w):
         if font.getlength(text) <= max_w:
             return text
@@ -413,8 +421,10 @@ class EinkRenderer:
         self._ring(layer, self.W // 2, 145, 46, 10, 0)
 
     def _waiting_text(self, draw):
-        safe = self._truncate(self.greeting, self.f(17), self.W - 2 * self.PAD)
-        self._text(draw, self.PAD, self.HDR_BASE, safe, self.f(17))
+        avail = self.W - 2 * self.PAD
+        f_greet = self._fit(self.greeting, (17, 16, 15, 14, 13), avail)
+        self._text(draw, self.PAD, self.HDR_BASE,
+                   self._truncate(self.greeting, f_greet, avail), f_greet)
         draw.text((self.W // 2, 145), "···", font=self.f(26),
                   fill=self.INK, anchor="mm")
         self._text(draw, self.W // 2, 232, "Waiting for a session", self.f(17), align="c")
@@ -431,9 +441,11 @@ class EinkRenderer:
         ts = self._parse_ts(snapshot)
         date_str = ts.strftime("%Y-%m-%d") if ts else "----------"
         date_w = self._tab_w(self.f(13), date_str)
-        safe = self._truncate(self.greeting, self.f(17),
-                              self.W - 2 * self.PAD - date_w - 16)
-        self._text(draw, self.PAD, self.HDR_BASE, safe, self.f(17))
+        # A longer greeting steps down a size or two rather than losing its tail.
+        avail = self.W - 2 * self.PAD - date_w - 16
+        f_greet = self._fit(self.greeting, (17, 16, 15, 14, 13), avail)
+        self._text(draw, self.PAD, self.HDR_BASE,
+                   self._truncate(self.greeting, f_greet, avail), f_greet)
         self._tab(draw, self.W - self.PAD, self.HDR_BASE, date_str, self.f(13), align="r")
 
     def _footer(self, draw, snapshot, active_sessions):
