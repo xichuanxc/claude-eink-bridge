@@ -194,8 +194,8 @@ SS = 4
 # whole point of using it.
 ROLE_FONTS = {
     "outline": {
-        "greet":      [("base", 17), ("base", 16), ("base", 15),
-                       ("base", 14), ("base", 13)],
+        "greet":      [("base", 26), ("base", 22), ("base", 18),
+                       ("base", 15)],
         "date":       [("base", 13)],
         "model":      [("base", 24)],
         "meta":       [("base", 13)],
@@ -205,6 +205,7 @@ ROLE_FONTS = {
         "ring_cap":   [("base", 12)],
         "limit":      [("base", 15)],
         "footer":     [("base", 12)],
+        "clock":      [("base", 18)],
         "wait_title": [("base", 17)],
         "wait_sub":   [("base", 13)],
     },
@@ -219,6 +220,7 @@ ROLE_FONTS = {
         "ring_cap":   [("pixel", 12)],
         "limit":      [("pixel", 24)],
         "footer":     [("pixel", 12)],
+        "clock":      [("pixel", 24)],
         "wait_title": [("pixel", 24)],
         "wait_sub":   [("pixel", 12)],
     },
@@ -259,6 +261,8 @@ class EinkRenderer:
     RULE_BODY  = 190
     RULE_FOOT  = 266
     FOOT_BASE  = 288
+    CLOCK_BASE = 292         # taller than the rest of the footer, so it sits
+                             # on its own baseline to stay optically centred
 
     L_RIGHT     = 268        # right edge of the left body column
     MODEL_BASE  = 70
@@ -498,31 +502,32 @@ class EinkRenderer:
         self._rule(ld, self.RULE_FOOT, 0, self.W)
 
     def _header(self, draw, snapshot):
-        ts = self._parse_ts(snapshot)
-        date_str = ts.strftime("%Y-%m-%d") if ts else "----------"
-        f_date = self.role("date")
-        date_w = self._tab_w(f_date, date_str)
-        # A longer greeting steps down a size or two rather than losing its tail.
-        avail = self.W - 2 * self.PAD - date_w - 16
+        # The greeting has the whole bar to itself — the date lives in the
+        # footer — and steps down a size rather than losing its tail.
+        avail = self.W - 2 * self.PAD
         f_greet = self.role("greet", self.greeting, avail)
         self._text(draw, self.PAD, self.HDR_BASE,
                    self._truncate(self.greeting, f_greet, avail), f_greet)
-        self._tab(draw, self.W - self.PAD, self.HDR_BASE, date_str, f_date, align="r")
 
     def _footer(self, draw, snapshot, active_sessions):
         y = self.FOOT_BASE
         f_foot = self.role("footer")
-        session = snapshot.get("sessionDuration", "")
-        if session:
-            self._tab(draw, self.PAD, y, f"Session {session}", f_foot)
-
-        if active_sessions > 1:
-            self._tab(draw, self.W // 2, y, f"{active_sessions} sessions",
-                      f_foot, align="c")
-
         ts = self._parse_ts(snapshot)
-        self._tab(draw, self.W - self.PAD, y,
-                  ts.strftime("%H:%M") if ts else "--:--", f_foot, align="r")
+
+        self._tab(draw, self.PAD, y,
+                  ts.strftime("%Y-%m-%d") if ts else "----------", f_foot)
+
+        middle = []
+        if snapshot.get("sessionDuration"):
+            middle.append(f"Session {snapshot['sessionDuration']}")
+        if active_sessions > 1:
+            middle.append(f"{active_sessions} sessions")
+        if middle:
+            self._tab(draw, self.W // 2, y, "  ·  ".join(middle), f_foot, align="c")
+
+        self._tab(draw, self.W - self.PAD, self.CLOCK_BASE,
+                  ts.strftime("%H:%M") if ts else "--:--",
+                  self.role("clock"), align="r")
 
     # ── Body ──────────────────────────────────────────────────────
 
