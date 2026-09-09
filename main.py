@@ -272,20 +272,12 @@ class EinkRenderer:
     STAT_LBL    = 155        # label and value group tightly; the block as a
     STAT_VAL    = 173        # whole sits low, out of the meta lines' way
 
-    # Context gauge: a cylinder filling from below. Its height is derived from
-    # the segments rather than the other way round, so every bar is the same
-    # whole number of pixels and none of them lands on a fraction.
-    CYL_CX       = 330
-    CYL_W        = 60
-    CYL_ELL_H    = 14        # depth of the elliptical caps
-    CYL_TOP_Y    = 40        # top of the upper cap
-    CYL_STROKE   = 2         # thick enough that the caps do not fray
-    CYL_INSET    = 6         # white gap between the wall and the contents
-    CYL_SEGMENTS = 10        # one bar per 10%
-    CYL_SLAB     = 7         # bar pitch; 2px of it is the gap above the bar
-    CYL_GAP      = 2
-    CTX_PCT_BASE = 158       # percentage sits below the cylinder, not inside
-    CTX_CAP_BASE = 180
+    RING_CX, RING_CY = 330, 100
+    RING_R, RING_TH  = 48, 10
+    RING_SEGMENTS    = 20    # one block per 5%
+    RING_GAP_DEG     = 4     # blank angle between blocks
+    RING_DOT         = 4     # square marking an unfilled block
+    RING_CAP_BASE    = 168   # "48k / 200k" under the ring
 
     ROW_TOP  = 197           # first rate-limit row
     ROW_H    = 34
@@ -440,56 +432,47 @@ class EinkRenderer:
             md.rectangle([(fill_w, 0), (w, h)], fill=0)
             layer.paste(Image.new("L", (w, h), self.INK), (ox, oy), mask)
 
-    @property
-    def CYL_BOT_Y(self):
-        return (self.CYL_TOP_Y + self.CYL_ELL_H
-                + self.CYL_SEGMENTS * self.CYL_SLAB)
+    def _ring(self, layer, cx, cy, r, thickness, percent):
+        """Segmented gauge: a solid block per 5% used, a dot per 5% left.
 
-    def _cylinder(self, layer, percent, cx=None, top=None):
-        """Cylinder filling from below, one bar per 10%.
-
-        A solid column reads as a black slab once it is most of the way up —
-        92% and 100% become the same picture, and it is a lot of ink for a
-        panel that has to redraw it. Bars stay countable, and being
-        axis-aligned rectangles on whole pixels they carry no staircase; only
-        the two caps are curved, and those are stroked thick enough not to
-        fray the way a hairline does.
+        A 1px circle is the worst case for a 1-bit panel — the outline breaks
+        into an uneven staircase. Blocks are thick enough that their stepping
+        reads as deliberate, and the dots marking the remainder are axis-aligned
+        squares, so they carry no staircase at all.
         """
-        ld = ImageDraw.Draw(layer)
-        cx = self.CYL_CX if cx is None else cx
-        x0, x1 = cx - self.CYL_W // 2, cx + self.CYL_W // 2
-        eh = self.CYL_ELL_H
-        top_c = (self.CYL_TOP_Y if top is None else top) + eh // 2
-        bot_c = top_c + self.CYL_SEGMENTS * self.CYL_SLAB
-
-        def ellipse(a, b, cy, h, **kw):
-            ld.ellipse([(a * SS, (cy - h / 2) * SS),
-                        (b * SS - 1, (cy + h / 2) * SS - 1)], **kw)
+        step = 360 / self.RING_SEGMENTS
+        gap = self.RING_GAP_DEG
+        mid = r - thickness / 2
 
         pct = min(max(percent, 0), 100)
         lit = 0 if pct <= 0 else min(
-            self.CYL_SEGMENTS,
-            max(1, round(pct / 100 * self.CYL_SEGMENTS)),
+            self.RING_SEGMENTS,
+            max(1, round(pct / 100 * self.RING_SEGMENTS)),
         )
 
         if lit:
-            lx0, lx1 = x0 + self.CYL_INSET, x1 - self.CYL_INSET
+            d = 2 * r * SS
+            inset = thickness * SS
+            mask = Image.new("L", (d, d), 0)
+            md = ImageDraw.Draw(mask)
             for i in range(lit):
-                bar_bot = bot_c - i * self.CYL_SLAB
-                bar_top = bar_bot - self.CYL_SLAB + self.CYL_GAP
-                ld.rectangle([(lx0 * SS, bar_top * SS), (lx1 * SS - 1, bar_bot * SS - 1)],
-                             fill=self.INK)
-            # Seat the stack on the rounded floor.
-            ellipse(lx0, lx1, bot_c, eh * (lx1 - lx0) / (x1 - x0), fill=self.INK)
+                start = -90 + i * step + gap / 2
+                md.pieslice([(0, 0), (d - 1, d - 1)],
+                            start, start + step - gap, fill=255)
+            md.ellipse([(inset, inset), (d - 1 - inset, d - 1 - inset)], fill=0)
+            layer.paste(Image.new("L", (d, d), self.INK),
+                        ((cx - r) * SS, (cy - r) * SS), mask)
 
-        for x in (x0, x1 - self.CYL_STROKE):
-            ld.rectangle([(x * SS, top_c * SS),
-                          ((x + self.CYL_STROKE) * SS - 1, bot_c * SS - 1)],
+        # Dots are placed on whole pixels so every one is the same square.
+        ld = ImageDraw.Draw(layer)
+        half = self.RING_DOT // 2
+        for i in range(lit, self.RING_SEGMENTS):
+            angle = math.radians(-90 + (i + 0.5) * step)
+            x = round(cx + mid * math.cos(angle))
+            y = round(cy + mid * math.sin(angle))
+            ld.rectangle([((x - half) * SS, (y - half) * SS),
+                          ((x + half) * SS - 1, (y + half) * SS - 1)],
                          fill=self.INK)
-        # Only the near half of the bottom cap is visible from this angle.
-        ld.arc([(x0 * SS, (bot_c - eh / 2) * SS), (x1 * SS - 1, (bot_c + eh / 2) * SS - 1)],
-               0, 180, fill=self.INK, width=self.CYL_STROKE * SS)
-        ellipse(x0, x1, top_c, eh, outline=self.INK, width=self.CYL_STROKE * SS)
 
     # ── Output conversion ─────────────────────────────────────────
 
@@ -529,20 +512,22 @@ class EinkRenderer:
 
     # ── Waiting screen ────────────────────────────────────────────
 
-    WAIT_CYL_TOP = 88        # the empty cylinder carries the idle screen
-
     def _waiting_shapes(self, layer, ld):
         self._rule(ld, self.RULE_HDR, 0, self.W)
-        self._cylinder(layer, 0, cx=self.W // 2, top=self.WAIT_CYL_TOP)
+        self._ring(layer, self.W // 2, 145, 46, 10, 0)
+        for dx in (-14, 0, 14):
+            x, y = (self.W // 2 + dx) * SS, 145 * SS
+            ld.rectangle([(x - 2 * SS, y - 2 * SS),
+                          (x + 2 * SS - 1, y + 2 * SS - 1)], fill=self.INK)
 
     def _waiting_text(self, draw):
         avail = self.W - 2 * self.PAD
         f_greet = self.role("greet", self.greeting, avail)
         self._text(draw, self.PAD, self.HDR_BASE,
                    self._truncate(self.greeting, f_greet, avail), f_greet)
-        self._text(draw, self.W // 2, 224, "Waiting for a session",
+        self._text(draw, self.W // 2, 232, "Waiting for a session",
                    self.role("wait_title"), align="c")
-        self._text(draw, self.W // 2, 248, "Start Claude Code to begin",
+        self._text(draw, self.W // 2, 256, "Start Claude Code to begin",
                    self.role("wait_sub"), align="c")
 
     # ── Chrome ────────────────────────────────────────────────────
@@ -584,7 +569,8 @@ class EinkRenderer:
 
     def _body_shapes(self, layer, ld, snapshot):
         self._rule(ld, self.STAT_RULE, self.PAD, self.L_RIGHT - 10)
-        self._cylinder(layer, (snapshot.get("context") or {}).get("percent", 0))
+        pct = (snapshot.get("context") or {}).get("percent", 0)
+        self._ring(layer, self.RING_CX, self.RING_CY, self.RING_R, self.RING_TH, pct)
 
     def _body(self, draw, snapshot):
         max_w = self.L_RIGHT - self.PAD
@@ -624,13 +610,13 @@ class EinkRenderer:
 
         # Context ring label
         pct_str = f"{ctx.get('percent', 0)}%"
-        col_w = self.W - self.PAD - (self.L_RIGHT + 14)
-        self._tab(draw, self.CYL_CX, self.CTX_PCT_BASE, pct_str,
-                  self.role("ring_pct", pct_str, col_w), align="c")
+        inner_w = 2 * (self.RING_R - self.RING_TH) - 8
+        self._tab_centered(draw, self.RING_CX, self.RING_CY, pct_str,
+                           self.role("ring_pct", pct_str, inner_w))
         total, size = ctx.get("totalTokens", 0), ctx.get("windowSize", 0)
         cap = (f"{format_tokens(total)} / {format_tokens(size)}"
                if size > 0 else "CONTEXT")
-        self._tab(draw, self.CYL_CX, self.CTX_CAP_BASE, cap,
+        self._tab(draw, self.RING_CX, self.RING_CAP_BASE, cap,
                   self.role("ring_cap"), align="c")
 
     # ── Rate limits ───────────────────────────────────────────────
