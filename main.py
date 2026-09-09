@@ -197,10 +197,10 @@ ROLE_FONTS = {
         "greet":      [("base", 17), ("base", 16), ("base", 15),
                        ("base", 14), ("base", 13)],
         "date":       [("base", 13)],
-        "model":      [("base", 32)],
+        "model":      [("base", 24)],
         "meta":       [("base", 13)],
-        "stat_label": [("base", 11)],
-        "stat_value": [("base", 18)],
+        "stat_label": [("base", 10)],
+        "stat_value": [("base", 13)],
         "ring_pct":   [("base", 28)],
         "ring_cap":   [("base", 12)],
         "limit":      [("base", 15)],
@@ -211,10 +211,10 @@ ROLE_FONTS = {
     "pixel": {
         "greet":      [("pixel", 24), ("pixel", 12)],
         "date":       [("pixel", 12)],
-        "model":      [("pixel", 36), ("pixel", 24)],
+        "model":      [("pixel", 24), ("pixel", 12)],
         "meta":       [("pixel", 12)],
         "stat_label": [("pixel", 12)],
-        "stat_value": [("pixel", 24)],
+        "stat_value": [("pixel", 12)],
         "ring_pct":   [("pixel", 36), ("pixel", 24)],
         "ring_cap":   [("pixel", 12)],
         "limit":      [("pixel", 24)],
@@ -260,12 +260,13 @@ class EinkRenderer:
     RULE_FOOT  = 266
     FOOT_BASE  = 288
 
-    L_RIGHT    = 268         # right edge of the left body column
-    MODEL_BASE = 78
-    META_BASE  = 104
-    STAT_RULE  = 122
-    STAT_LBL   = 141
-    STAT_VAL   = 166
+    L_RIGHT     = 268        # right edge of the left body column
+    MODEL_BASE  = 70
+    PROJ_BASE   = 96         # project and branch each get a full line, so a
+    BRANCH_BASE = 114        # long name no longer crowds out the other
+    STAT_RULE   = 134
+    STAT_LBL    = 155        # label and value group tightly; the block as a
+    STAT_VAL    = 173        # whole sits low, out of the meta lines' way
 
     RING_CX, RING_CY = 330, 100
     RING_R, RING_TH  = 48, 10
@@ -538,21 +539,19 @@ class EinkRenderer:
         self._text(draw, self.PAD, self.MODEL_BASE,
                    self._truncate(model, f_model, max_w), f_model)
 
-        # project · branch
-        # The branch is the more perishable half, so the directory gives up
-        # room first rather than the whole line truncating from the right.
+        # project, then branch — a line each
         f_meta = self.role("meta")
-        git = snapshot.get("git") or {}
-        branch = (git["branch"] + ("*" if git.get("isDirty") else "")) if git.get("branch") else ""
-        branch = self._truncate(branch, f_meta, max_w * 0.55) if branch else ""
         project = snapshot.get("project", "")
         name = project.replace("\\", "/").rstrip("/").split("/")[-1] if project else ""
-        sep = "  ·  " if (name and branch) else ""
         if name:
-            name = self._truncate(
-                name, f_meta, max_w - f_meta.getlength(sep + branch))
-        if name or branch:
-            self._text(draw, self.PAD, self.META_BASE, name + sep + branch, f_meta)
+            self._text(draw, self.PAD, self.PROJ_BASE,
+                       self._truncate(name, f_meta, max_w), f_meta)
+
+        git = snapshot.get("git") or {}
+        if git.get("branch"):
+            branch = git["branch"] + ("*" if git.get("isDirty") else "")
+            self._text(draw, self.PAD, self.BRANCH_BASE,
+                       self._truncate(branch, f_meta, max_w), f_meta)
 
         # in / out / cache
         ctx = snapshot.get("context") or {}
