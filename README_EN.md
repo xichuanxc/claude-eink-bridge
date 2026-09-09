@@ -52,7 +52,8 @@ Sign in to [Zectrix Cloud](https://cloud.zectrix.com/) and edit `~/.claude-eink-
   "page_id": 5,
   "interval_seconds": 60,
   "greeting": "Token exhausted yet?",
-  "font_path": "font.ttf"
+  "font_path": "font.ttf",
+  "render_mode": "gray"
 }
 ```
 
@@ -73,7 +74,7 @@ The wrapper runs with Claude Code's status line and starts the bridge on demand.
 </p>
 
 - `eink-wrapper.ts` preserves Claude HUD output while writing at most one session snapshot every 30 seconds.
-- `main.py` selects the most recently active session and renders a 1-bit PNG in memory.
+- `main.py` selects the most recently active session and renders a PNG in memory (anti-aliased greyscale by default, 1-bit on request).
 - The main loop checks every 60 seconds by default; unchanged data skips rendering and network delivery.
 - When multiple Claude Code sessions are active, the display follows the newest project and shows the active-session count in its footer.
 
@@ -101,6 +102,7 @@ Without either option, the bridge uses `~/.claude`.
 | `interval_seconds` | No | Data check and push interval; defaults to 60 seconds |
 | `greeting` | No | Header greeting; long text is truncated |
 | `font_path` | No | Local TTF path; defaults to `font.ttf` |
+| `render_mode` | No | `gray` (default) pushes an anti-aliased greyscale image and lets the device dither it; `mono` pushes a 1-bit image ordered-dithered locally |
 
 ## Troubleshooting
 
@@ -115,7 +117,13 @@ source .venv/bin/activate
 python main.py --preview
 ```
 
-If `preview-local.png` appears, configuration loading and local rendering are working. If the device still does not update, check the session snapshots, `api_key`, `mac_address`, `page_id`, device connectivity, and the Zectrix polling interval.
+If `preview-local.png` appears, configuration loading and local rendering are working. To compare the two render modes, add `--mode`:
+
+```bash
+python main.py --preview --mode mono
+```
+
+If the device still does not update, check the session snapshots, `api_key`, `mac_address`, `page_id`, device connectivity, and the Zectrix polling interval.
 </details>
 
 <details>

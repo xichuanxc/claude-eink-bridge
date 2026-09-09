@@ -52,7 +52,8 @@ curl -fsSL https://raw.githubusercontent.com/BarryBarrywu/claude-eink-bridge/mai
   "page_id": 5,
   "interval_seconds": 60,
   "greeting": "今天的Token用完了吗？",
-  "font_path": "font.ttf"
+  "font_path": "font.ttf",
+  "render_mode": "gray"
 }
 ```
 
@@ -73,7 +74,7 @@ wrapper 会随 Claude Code 状态栏运行，桥接进程按需启动。没有�
 </p>
 
 - `eink-wrapper.ts` 在保留 Claude HUD 原有输出的同时，最多每 30 秒写入一次会话快照。
-- `main.py` 选择最近活跃的会话，在内存中渲染 1-bit PNG。
+- `main.py` 选择最近活跃的会话，在内存中渲染 PNG（默认灰度抗锯齿，可切换 1-bit）。
 - 主循环默认每 60 秒检查一次；数据未变化时跳过渲染和网络推送。
 - 多个 Claude Code 会话并存时，屏幕显示最近更新的项目，并在底部标出活跃会话数。
 
@@ -101,6 +102,7 @@ bash install.sh --config-dir "$HOME/.claude-team"
 | `interval_seconds` | 否 | 检查数据并尝试推送的间隔，默认 60 秒 |
 | `greeting` | 否 | 顶部问候语，过长时自动截断 |
 | `font_path` | 否 | 本地 TTF 字体路径，默认 `font.ttf` |
+| `render_mode` | 否 | `gray`（默认）推送抗锯齿灰度图，由设备自行抖动；`mono` 推送本地已做有序抖动的 1-bit 图 |
 
 ## 排查问题
 
@@ -115,7 +117,13 @@ source .venv/bin/activate
 python main.py --preview
 ```
 
-如果生成了 `preview-local.png`，说明配置加载和本地渲染路径可以工作。屏幕仍不更新时，重点检查会话快照、`api_key`、`mac_address`、`page_id`、设备联网状态和 Zectrix 轮询设置。
+如果生成了 `preview-local.png`，说明配置加载和本地渲染路径可以工作。想对比两种渲染模式，可以加上 `--mode`：
+
+```bash
+python main.py --preview --mode mono
+```
+
+屏幕仍不更新时，重点检查会话快照、`api_key`、`mac_address`、`page_id`、设备联网状态和 Zectrix 轮询设置。
 </details>
 
 <details>
