@@ -26,7 +26,7 @@ The display keeps these signals visible at a glance:
 - current model, plus project directory and Git branch on a line each;
 - input, output, and cached tokens;
 - context occupancy and 5-hour / 7-day usage windows;
-- reset countdowns, session duration, active-session count, and update time.
+- reset countdowns, date, session duration, active-session count, and update time.
 
 ## Quick start
 
