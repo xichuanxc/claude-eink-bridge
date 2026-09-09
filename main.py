@@ -274,6 +274,9 @@ class EinkRenderer:
 
     RING_CX, RING_CY = 330, 100
     RING_R, RING_TH  = 48, 10
+    RING_SEGMENTS    = 20    # one block per 5%
+    RING_GAP_DEG     = 4     # blank angle between blocks
+    RING_DOT         = 4     # square marking an unfilled block
     RING_CAP_BASE    = 168   # "48k / 200k" under the ring
 
     ROW_TOP  = 197           # first rate-limit row
@@ -360,6 +363,28 @@ class EinkRenderer:
                 draw.text((self._snap(x), baseline), c, font=font, fill=fill, anchor="ls")
                 x += font.getlength(c)
 
+    def _tab_bbox(self, draw, text, font):
+        """Ink bounds of _tab output, relative to origin x=0, baseline=0."""
+        x, box = 0.0, None
+        dw = self._dw(font)
+        for c in text:
+            adv = dw if c.isdigit() else font.getlength(c)
+            off = (dw - font.getlength(c)) / 2 if c.isdigit() else 0
+            bb = draw.textbbox((x + off, 0), c, font=font, anchor="ls")
+            if bb[2] > bb[0] and bb[3] > bb[1]:      # skip blanks
+                box = bb if box is None else (
+                    min(box[0], bb[0]), min(box[1], bb[1]),
+                    max(box[2], bb[2]), max(box[3], bb[3]),
+                )
+            x += adv
+        return box or (0, 0, 0, 0)
+
+    def _tab_centered(self, draw, cx, cy, text, font, fill=INK):
+        """Place text so its ink — not its advance box — sits on (cx, cy)."""
+        x0, y0, x1, y1 = self._tab_bbox(draw, text, font)
+        self._tab(draw, cx - (x0 + x1) / 2, round(cy - (y0 + y1) / 2),
+                  text, font, fill=fill)
+
     def _tracked(self, draw, x, baseline, text, font, spacing, fill=INK):
         """Letter-spaced text, for the small uppercase labels."""
         for c in text:
@@ -408,35 +433,46 @@ class EinkRenderer:
             layer.paste(Image.new("L", (w, h), self.INK), (ox, oy), mask)
 
     def _ring(self, layer, cx, cy, r, thickness, percent):
-        """Hairline annulus, filled solid over the swept arc."""
-        d = 2 * r * SS
-        ox, oy = (cx - r) * SS, (cy - r) * SS
-        box = [(0, 0), (d - 1, d - 1)]
-        pad = thickness * SS
-        inner = [(pad, pad), (d - 1 - pad, d - 1 - pad)]
+        """Segmented gauge: a solid block per 5% used, a dot per 5% left.
 
-        ld = ImageDraw.Draw(layer)
-        ld.ellipse([(ox, oy), (ox + d - 1, oy + d - 1)], outline=self.INK, width=SS)
-        ld.ellipse([(ox + pad, oy + pad), (ox + d - 1 - pad, oy + d - 1 - pad)],
-                   outline=self.INK, width=SS)
+        A 1px circle is the worst case for a 1-bit panel — the outline breaks
+        into an uneven staircase. Blocks are thick enough that their stepping
+        reads as deliberate, and the dots marking the remainder are axis-aligned
+        squares, so they carry no staircase at all.
+        """
+        step = 360 / self.RING_SEGMENTS
+        gap = self.RING_GAP_DEG
+        mid = r - thickness / 2
 
         pct = min(max(percent, 0), 100)
-        if pct <= 0:
-            return
+        lit = 0 if pct <= 0 else min(
+            self.RING_SEGMENTS,
+            max(1, round(pct / 100 * self.RING_SEGMENTS)),
+        )
 
-        sweep = 360 * pct / 100
-        mask = Image.new("L", (d, d), 0)
-        md = ImageDraw.Draw(mask)
-        md.pieslice(box, -90, -90 + sweep, fill=255)
-        # Round off both ends of the arc.
-        mid = (r - thickness / 2) * SS
-        cap = thickness * SS / 2
-        for ang in (-90, -90 + sweep):
-            ax = d / 2 + mid * math.cos(math.radians(ang))
-            ay = d / 2 + mid * math.sin(math.radians(ang))
-            md.ellipse([(ax - cap, ay - cap), (ax + cap, ay + cap)], fill=255)
-        md.ellipse(inner, fill=0)
-        layer.paste(Image.new("L", (d, d), self.INK), (ox, oy), mask)
+        if lit:
+            d = 2 * r * SS
+            inset = thickness * SS
+            mask = Image.new("L", (d, d), 0)
+            md = ImageDraw.Draw(mask)
+            for i in range(lit):
+                start = -90 + i * step + gap / 2
+                md.pieslice([(0, 0), (d - 1, d - 1)],
+                            start, start + step - gap, fill=255)
+            md.ellipse([(inset, inset), (d - 1 - inset, d - 1 - inset)], fill=0)
+            layer.paste(Image.new("L", (d, d), self.INK),
+                        ((cx - r) * SS, (cy - r) * SS), mask)
+
+        # Dots are placed on whole pixels so every one is the same square.
+        ld = ImageDraw.Draw(layer)
+        half = self.RING_DOT // 2
+        for i in range(lit, self.RING_SEGMENTS):
+            angle = math.radians(-90 + (i + 0.5) * step)
+            x = round(cx + mid * math.cos(angle))
+            y = round(cy + mid * math.sin(angle))
+            ld.rectangle([((x - half) * SS, (y - half) * SS),
+                          ((x + half) * SS - 1, (y + half) * SS - 1)],
+                         fill=self.INK)
 
     # ── Output conversion ─────────────────────────────────────────
 
@@ -575,8 +611,8 @@ class EinkRenderer:
         # Context ring label
         pct_str = f"{ctx.get('percent', 0)}%"
         inner_w = 2 * (self.RING_R - self.RING_TH) - 8
-        self._tab(draw, self.RING_CX, self.RING_CY + 10, pct_str,
-                  self.role("ring_pct", pct_str, inner_w), align="c")
+        self._tab_centered(draw, self.RING_CX, self.RING_CY, pct_str,
+                           self.role("ring_pct", pct_str, inner_w))
         total, size = ctx.get("totalTokens", 0), ctx.get("windowSize", 0)
         cap = (f"{format_tokens(total)} / {format_tokens(size)}"
                if size > 0 else "CONTEXT")
