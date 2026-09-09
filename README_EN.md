@@ -53,7 +53,7 @@ Sign in to [Zectrix Cloud](https://cloud.zectrix.com/) and edit `~/.claude-eink-
   "interval_seconds": 60,
   "greeting": "Token exhausted yet?",
   "font_path": "font.ttf",
-  "render_mode": "gray"
+  "render_mode": "auto"
 }
 ```
 
@@ -102,7 +102,7 @@ Without either option, the bridge uses `~/.claude`.
 | `interval_seconds` | No | Data check and push interval; defaults to 60 seconds |
 | `greeting` | No | Header greeting; long text is truncated |
 | `font_path` | No | Local TTF path; defaults to `font.ttf` |
-| `render_mode` | No | `gray` (default) pushes an anti-aliased greyscale image; `mono` pushes pure black-and-white. The layout itself uses no mid-tones, so the two differ only at glyph edges |
+| `render_mode` | No | `auto` (default) asks the cloud what the panel supports: `mono` for a 1-bit board, `gray` otherwise. Set `gray` or `mono` to pin it |
 
 ## Troubleshooting
 

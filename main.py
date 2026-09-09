@@ -61,10 +61,10 @@ def load_config():
         font_raw = str(Path(__file__).parent / font_raw)
     cfg["font_path"] = font_raw
 
-    mode = str(cfg.get("render_mode", "gray")).lower()
-    if mode not in ("gray", "mono"):
-        print(f"⚠️  Unknown render_mode '{mode}' — falling back to 'gray'.")
-        mode = "gray"
+    mode = str(cfg.get("render_mode", "auto")).lower()
+    if mode not in ("auto", "gray", "mono"):
+        print(f"⚠️  Unknown render_mode '{mode}' — falling back to 'auto'.")
+        mode = "auto"
     cfg["render_mode"] = mode
     return cfg
 
@@ -548,6 +548,33 @@ class EinkRenderer:
 
 # ─── Zectrix API ─────────────────────────────────────────────────────────────
 
+def detect_render_mode(config):
+    """Ask the cloud what the panel can actually show.
+
+    A 1-bit panel has no grey levels, so anti-aliased edges only give its own
+    dithering something to speckle — those boards want a plain threshold.
+    Anything else can use the greyscale render. Falls back to "mono", which is
+    the safe answer for the black-and-white boards these devices usually are.
+    """
+    try:
+        res = requests.get(
+            "https://cloud.zectrix.com/open/v1/devices",
+            headers={"X-API-Key": config["api_key"]}, timeout=15,
+        )
+        res.raise_for_status()
+        for dev in res.json().get("data") or []:
+            if str(dev.get("deviceId", "")).lower() == config["mac_address"].lower():
+                colour = str(dev.get("screenColor", "")).lower()
+                mode = "mono" if colour == "1bit" else "gray"
+                print(f"  Detected: {dev.get('board', 'device')} / {colour} → {mode}")
+                return mode
+        print("  ⚠️  Device not found in account — defaulting to 'mono'.")
+    except Exception as e:
+        print(f"  ⚠️  Could not query device ({e}) — defaulting to 'mono'.")
+    return "mono"
+
+
+
 def push_to_device(img, config):
     # Greyscale output is handed to the device with dithering on so it can map
     # the tones to its own palette; a 1-bit image is already final.
@@ -591,12 +618,6 @@ IDLE_SHUTDOWN_SECONDS = 10 * 60  # 10 minutes
 
 
 def run(config, *, once=False, preview=False, debug=False):
-    greeting = config.get("greeting", "今天的Token用完了吗？")
-    renderer = EinkRenderer(
-        config["font_path"],
-        greeting=greeting,
-        render_mode=config["render_mode"],
-    )
     interval = config.get("interval_seconds", 60)
 
     print("╔══════════════════════════════════════╗")
@@ -605,10 +626,19 @@ def run(config, *, once=False, preview=False, debug=False):
     print(f"  Device  : {config['mac_address']}")
     print(f"  Page    : {config['page_id']}")
     print(f"  Interval: {interval}s")
-    print(f"  Render  : {config['render_mode']}")
     print(f"  Idle off: {IDLE_SHUTDOWN_SECONDS // 60}min")
+
+    if config["render_mode"] == "auto":
+        config["render_mode"] = detect_render_mode(config)
+    print(f"  Render  : {config['render_mode']}")
     print(f"  Snapshots: {SNAPSHOTS_DIR}")
     print()
+
+    renderer = EinkRenderer(
+        config["font_path"],
+        greeting=config.get("greeting", "今天的Token用完了吗？"),
+        render_mode=config["render_mode"],
+    )
 
     if preview:
         snapshot, active, _ = scan_snapshots()
@@ -670,7 +700,7 @@ def main():
         help="Print raw snapshot data and debug info",
     )
     parser.add_argument(
-        "--mode", choices=("gray", "mono"),
+        "--mode", choices=("auto", "gray", "mono"),
         help="Override config.json's render_mode for this run",
     )
     args = parser.parse_args()

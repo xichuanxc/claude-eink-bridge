@@ -5,5 +5,5 @@
   "interval_seconds": 60,
   "greeting": "今天的Token用完了吗？",
   "font_path": "font.ttf",
-  "render_mode": "gray"
+  "render_mode": "auto"
 }
